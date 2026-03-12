@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  pipeline:
+    build: .
+    volumes:
+      - .:/app
+    # Using --skip_extract because Azure Kinect Sensor SDK native libraries aren't installed in the container
+    # and raw frames are already available in outputs/raw_frames.
+    command: ["7_IT101091_R3.mkv", "--output_dir", "outputs", "--skip_extract", "--step", "5", "--voxel_size", "0.01", "--dbscan_eps", "0.05"]

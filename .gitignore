@@ -1,0 +1,15 @@
+# Environments
+.venv/
+.env/
+
+# Outputs and Large Data
+/outputs/
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.png
+*.jpg
+*.jpeg
+*.ply
+__pycache__/
