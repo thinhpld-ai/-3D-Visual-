@@ -54,16 +54,49 @@ def extract_largest_cluster(pcd, eps=0.05, min_points=100):
     if max_label < 0:
         return pcd
         
-    # Find the largest cluster (excluding -1 noise)
+    # Find valid clusters
     unique_labels, counts = np.unique(labels[labels >= 0], return_counts=True)
     if len(unique_labels) == 0:
         return pcd
         
-    largest_cluster_label = unique_labels[np.argmax(counts)]
-    print(f"Largest cluster label: {largest_cluster_label}")
+    sorted_idx = np.argsort(counts)[::-1]
+    best_cluster_pcd = None
     
-    largest_cluster_indices = np.where(labels == largest_cluster_label)[0]
-    return pcd.select_by_index(largest_cluster_indices)
+    for idx in sorted_idx:
+        label = unique_labels[idx]
+        cluster_indices = np.where(labels == label)[0]
+        cluster_pcd = pcd.select_by_index(cluster_indices)
+        
+        # Geometry check: avoid flat surfaces (e.g., walls, floors)
+        try:
+            aabb = cluster_pcd.get_axis_aligned_bounding_box()
+            extent = aabb.get_extent()
+            sorted_extent = np.sort(extent) # [thickness, width, length]
+            
+            thickness = sorted_extent[0]
+            max_dim = sorted_extent[2]
+            
+            # Threshold: thin (< 15cm) and long (> 50cm) is rejected
+            is_flat = thickness < 0.15 and max_dim > 0.5
+            
+            if not is_flat:
+                best_cluster_pcd = cluster_pcd
+                print(f"Selected cluster {label} with non-flat extents: {extent}")
+                break
+            else:
+                print(f"Rejected cluster {label} as flat surface (extent: {extent})")
+                
+        except Exception as e:
+            print(f"Error computing bounding box for cluster {label}: {e}")
+            
+    # Fallback to absolute largest if all were rejected
+    if best_cluster_pcd is None:
+        print("Warning: All clusters appeared flat. Falling back to largest cluster.")
+        largest_cluster_label = unique_labels[sorted_idx[0]]
+        largest_cluster_indices = np.where(labels == largest_cluster_label)[0]
+        best_cluster_pcd = pcd.select_by_index(largest_cluster_indices)
+        
+    return best_cluster_pcd
 
 def run_segmentation(input_ply, output_ply, num_planes=3, dbscan_eps=0.05, min_points=50, crop_radius=1.5, z_min=-0.5, z_max=3.0, floor_info_path="outputs/metrics/floor_plane.json"):
     pcd = o3d.io.read_point_cloud(input_ply)
@@ -111,6 +144,34 @@ def run_segmentation(input_ply, output_ply, num_planes=3, dbscan_eps=0.05, min_p
     print("Saving clean tree point cloud...")
     o3d.io.write_point_cloud(output_ply, tree_clean)
     print(f"Saved {len(tree_clean.points)} points to {output_ply}")
+    
+    # Generate full scene segmented visualization
+    print("Generating full scene segmented visualization...")
+    try:
+        if not pcd.has_colors():
+            # If no colors, paint uniform gray
+            pcd.paint_uniform_color([0.5, 0.5, 0.5])
+        else:
+            # Desaturate and dim background
+            colors = np.asarray(pcd.colors)
+            gray = np.mean(colors, axis=1, keepdims=True)
+            pcd.colors = o3d.utility.Vector3dVector(gray * 0.4 + 0.3)
+            
+        # Find points close to the extracted tree
+        distances = pcd.compute_point_cloud_distance(tree_clean)
+        distances = np.asarray(distances)
+        
+        # Color tree points bright green
+        tree_mask = distances < 0.05
+        colors = np.asarray(pcd.colors)
+        colors[tree_mask] = [0.0, 1.0, 0.0]
+        pcd.colors = o3d.utility.Vector3dVector(colors)
+        
+        segmented_scene_path = Path(output_ply).parent / "scene_segmented.ply"
+        o3d.io.write_point_cloud(str(segmented_scene_path), pcd)
+        print(f"Saved segmented full scene to {segmented_scene_path}")
+    except Exception as e:
+        print(f"Failed to generate segmented scene visualization: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Segment tree point cloud from scene.")
