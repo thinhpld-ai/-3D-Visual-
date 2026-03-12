@@ -19,8 +19,7 @@ def get_intrinsic_matrix(calibration_data):
     """
     Extract perfectly aligned camera intrinsics from Microsoft's official calibration.
     """
-    cam_cal = calibration_data.color_camera_calibration
-    params = cam_cal.intrinsics.parameters.param
+    params = calibration_data.color_params
     
     fx = params.fx
     fy = params.fy
@@ -59,8 +58,8 @@ def extract_frames(mkv_path, output_dir, max_frames=None):
     
     # Extract official factory calibration
     calibration = playback.get_calibration()
-    width = calibration.color_camera_calibration.resolution_width
-    height = calibration.color_camera_calibration.resolution_height
+    width = calibration._handle.color_camera_calibration.resolution_width
+    height = calibration._handle.color_camera_calibration.resolution_height
     
     intrinsics_dict = {
         "width": width,
