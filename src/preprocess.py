@@ -25,16 +25,32 @@ def variance_of_laplacian(image):
 
 def bilateral_filter_depth(depth_img, d=7, sigma_color=75, sigma_space=75):
     """Apply bilateral filter to depth image to reduce noise while preserving edges."""
+    # IMPORTANT:
+    # Depth images are 16-bit (mm). Normalizing to 8-bit loses precision and can
+    # distort geometry (thin structures disappear / get "melted").
+    # OpenCV supports bilateral filtering on CV_32F, so keep depth in mm.
     depth_float = depth_img.astype(np.float32)
-    depth_norm = cv2.normalize(depth_float, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    filtered_norm = cv2.bilateralFilter(depth_norm, d, sigma_color, sigma_space)
-    # Scale back
-    scale = depth_float.max() / 255.0 if depth_float.max() > 0 else 1.0
-    depth_filtered = (filtered_norm.astype(np.float32) * scale).astype(depth_img.dtype)
-    return depth_filtered
+    valid_mask = depth_img > 0
+
+    filtered = cv2.bilateralFilter(depth_float, d, sigma_color, sigma_space)
+
+    # Preserve invalid pixels (0 depth) to avoid "bleeding" zeros into valid areas.
+    filtered[~valid_mask] = 0.0
+
+    # Round back to integer mm.
+    return np.rint(filtered).astype(depth_img.dtype)
 
 
-def preprocess_frames(input_dir, output_dir, blur_threshold=50.0, max_depth=6000, min_depth=100):
+def preprocess_frames(
+    input_dir,
+    output_dir,
+    blur_threshold=50.0,
+    max_depth=6000,
+    min_depth=100,
+    temporal_similarity_thresh=0.98,
+    min_valid_ratio=0.1,
+    disable_temporal_filter=False,
+):
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
 
@@ -65,10 +81,19 @@ def preprocess_frames(input_dir, output_dir, blur_threshold=50.0, max_depth=6000
     accepted = 0
     rejected = 0
     prev_gray = None
-    TEMPORAL_SIMILARITY_THRESH = 0.98  # SSIM-like check, skip if too similar
+    # SSIM-like check: skip if too similar to previous frame.
+    # Higher threshold => more aggressive skipping. Lower => keep more frames.
+    TEMPORAL_SIMILARITY_THRESH = float(temporal_similarity_thresh)
 
     print(f"Starting preprocessing: {len(rgb_files)} total frames")
-    print(f"Settings: blur_threshold={blur_threshold}, depth={min_depth}-{max_depth}mm")
+    print(
+        "Settings: "
+        f"blur_threshold={blur_threshold}, "
+        f"depth={min_depth}-{max_depth}mm, "
+        f"temporal_similarity_thresh={TEMPORAL_SIMILARITY_THRESH}, "
+        f"min_valid_ratio={min_valid_ratio}, "
+        f"disable_temporal_filter={disable_temporal_filter}"
+    )
 
     for rgb_path, depth_path in zip(rgb_files, depth_files):
         filename = Path(rgb_path).name
@@ -89,7 +114,7 @@ def preprocess_frames(input_dir, output_dir, blur_threshold=50.0, max_depth=6000
             continue
 
         # --- Temporal redundancy check: skip if almost identical to previous frame ---
-        if prev_gray is not None:
+        if (not disable_temporal_filter) and (prev_gray is not None):
             diff = cv2.absdiff(gray, prev_gray)
             similarity = 1.0 - (diff.mean() / 255.0)
             if similarity > TEMPORAL_SIMILARITY_THRESH:
@@ -103,7 +128,7 @@ def preprocess_frames(input_dir, output_dir, blur_threshold=50.0, max_depth=6000
 
         # --- Valid depth coverage check ---
         valid_ratio = np.count_nonzero(depth_filtered) / max(depth_filtered.size, 1)
-        if valid_ratio < 0.1:
+        if valid_ratio < float(min_valid_ratio):
             rejected += 1
             continue
 
@@ -131,7 +156,21 @@ if __name__ == "__main__":
     parser.add_argument("--blur_threshold",  type=float, default=50.0)
     parser.add_argument("--max_depth",       type=int,   default=6000)
     parser.add_argument("--min_depth",       type=int,   default=100)
+    parser.add_argument("--temporal_similarity_thresh", type=float, default=0.98,
+                        help="Skip frame if too similar to previous (higher = more skipping).")
+    parser.add_argument("--min_valid_ratio", type=float, default=0.1,
+                        help="Reject if valid depth pixel ratio is below this threshold.")
+    parser.add_argument("--disable_temporal_filter", action="store_true",
+                        help="Keep frames even if they are very similar to previous.")
     args = parser.parse_args()
 
-    preprocess_frames(args.input_dir, args.output_dir,
-                      args.blur_threshold, args.max_depth, args.min_depth)
+    preprocess_frames(
+        args.input_dir,
+        args.output_dir,
+        args.blur_threshold,
+        args.max_depth,
+        args.min_depth,
+        args.temporal_similarity_thresh,
+        args.min_valid_ratio,
+        args.disable_temporal_filter,
+    )

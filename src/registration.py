@@ -106,12 +106,14 @@ def run_registration(input_dir, output_dir, step=1, keyframe_interval=20):
     pose_graph.nodes.append(o3d.pipelines.registration.PoseGraphNode(np.identity(4)))
 
     odo_option = o3d.pipelines.odometry.OdometryOption()
-    trans_cum = np.identity(4)
+    # Camera pose in world coordinates (T_world_cam). Start at identity.
+    T_wc = np.identity(4)
 
     print("Building sequential odometry...")
     for s in range(n_frames - 1):
-        src_rgbd = rgbd_from_files(rgb_files[s + 1], depth_files[s + 1])
-        tgt_rgbd = rgbd_from_files(rgb_files[s],     depth_files[s])
+        # Compute transform from frame s -> s+1
+        src_rgbd = rgbd_from_files(rgb_files[s],     depth_files[s])
+        tgt_rgbd = rgbd_from_files(rgb_files[s + 1], depth_files[s + 1])
 
         success, trans, info = o3d.pipelines.odometry.compute_rgbd_odometry(
             src_rgbd, tgt_rgbd,
@@ -124,11 +126,14 @@ def run_registration(input_dir, output_dir, step=1, keyframe_interval=20):
             trans = np.identity(4)
             info  = np.identity(6) * 1e-6
 
-        trans_cum = trans @ trans_cum
+        # Accumulate global pose: T_wc(s+1) = T_wc(s) * T_s_to_s+1
+        T_wc = T_wc @ trans
         pose_graph.nodes.append(
-            o3d.pipelines.registration.PoseGraphNode(np.linalg.inv(trans_cum))
+            # Open3D pose graph nodes store inverse pose in many examples.
+            o3d.pipelines.registration.PoseGraphNode(np.linalg.inv(T_wc))
         )
         pose_graph.edges.append(
+            # Edge transformation should map source(s) -> target(s+1)
             o3d.pipelines.registration.PoseGraphEdge(s, s + 1, trans, info, uncertain=False)
         )
 
@@ -193,11 +198,13 @@ def run_registration(input_dir, output_dir, step=1, keyframe_interval=20):
     )
 
     # ---- Save trajectory ----
-    poses = [node.pose.tolist() for node in pose_graph.nodes]
+    # node.pose is (usually) the inverse of T_world_cam, so convert back to T_world_cam.
+    poses = [np.linalg.inv(node.pose).tolist() for node in pose_graph.nodes]
     output_data = {
         "step": step,
         "files": [str(Path(f).name) for f in rgb_files],
-        "poses": poses
+        "poses": poses,
+        "pose_convention": "T_world_cam"
     }
     traj_file = output_dir / "trajectory.json"
     with open(traj_file, "w") as f:

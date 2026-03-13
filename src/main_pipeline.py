@@ -40,6 +40,12 @@ def main():
     parser.add_argument("--voxel_size",      type=float, default=0.008,
                         help="TSDF voxel size in metres (0.008 = 8mm)")
     parser.add_argument("--blur_threshold",  type=float, default=50.0)
+    parser.add_argument("--temporal_similarity_thresh", type=float, default=0.98,
+                        help="Preprocess: skip frame if too similar to previous (higher = more skipping)")
+    parser.add_argument("--min_valid_ratio", type=float, default=0.1,
+                        help="Preprocess: reject if valid depth pixel ratio is below this threshold")
+    parser.add_argument("--disable_temporal_filter", action="store_true",
+                        help="Preprocess: keep frames even if very similar to previous")
     parser.add_argument("--dbscan_eps",      type=float, default=0.05)
     parser.add_argument("--z_min",           type=float, default=-0.5)
     parser.add_argument("--z_max",           type=float, default=4.0)
@@ -94,6 +100,13 @@ def main():
             "--blur_threshold", str(args.blur_threshold),
             "--max_depth",      "6000",
             "--min_depth",      "100",
+            "--temporal_similarity_thresh", str(args.temporal_similarity_thresh),
+            "--min_valid_ratio", str(args.min_valid_ratio),
+            *(
+                ["--disable_temporal_filter"]
+                if args.disable_temporal_filter
+                else []
+            ),
         ], "Step 2 — Preprocess & Filter Frames (v2)")
     else:
         print("\n[SKIP] Step 2 — using existing processed frames")
